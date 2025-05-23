@@ -20,20 +20,46 @@ type PeerInfo struct {
 	Port string
 }
 
-// Peer representa al nodo actual
+// Peer representa al nodo local (self)
 type Peer struct {
-	ID    int
-	Port  string
-	Peers []PeerInfo
+	ID      int         // ID del nodo local (0 si aún no asignado)
+	IP      string      // IP local detectada
+	Port    string      // Puerto en el que escucha este nodo
+	Peers   []PeerInfo  // Lista de peers conocidos
+	Conn    net.Conn    // Conexión TCP activa (si aplica)
+
+	// Control de estado de descubrimiento
+	LastHelloSent   time.Time // Último broadcast HELLO emitido
+	LastIDAssigned  time.Time // Último momento en que recibió o asignó un ID
 }
 
 // NewPeer crea un nuevo nodo Peer
 func NewPeer(id int, port string, peers []PeerInfo) *Peer {
 	return &Peer{
-		ID:    id,
-		Port:  port,
-		Peers: peers,
+		ID:     id,
+		IP:     GetLocalIP(),
+		Port:   port,
+		Peers:  peers,
 	}
+}
+
+func (p *Peer) AddPeer(info PeerInfo) {
+	for _, existing := range p.Peers {
+		if existing.IP == info.IP && existing.Port == info.Port {
+			return // ya está
+		}
+	}
+	p.Peers = append(p.Peers, info)
+}
+
+
+func (p *Peer) FindPeerByID(id int) *PeerInfo {
+	for _, peer := range p.Peers {
+		if peer.ID == id {
+			return &peer
+		}
+	}
+	return nil
 }
 
 // StartListener inicia la escucha para recibir archivos
@@ -171,6 +197,9 @@ func (p *Peer) handleConnection(conn net.Conn) {
 func (p *Peer) SendFile(filePath, addr string) error {
 	const maxRetries = 3
 	const timeout = 5 * time.Second
+  if p.ID == 0 {
+	  return fmt.Errorf("nodo sin ID asignado, no se puede enviar archivos")
+  }
 
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -331,4 +360,46 @@ func (p *Peer) RetryWorker(interval time.Duration) {
 		}
 	}
 }
+
+func (p *Peer) RequestFileTree(addr string) (*fs.FileNode, error) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	msg := message.Message{
+		Type: "LIST",
+		From: p.ID,
+	}
+	data, _ := json.Marshal(msg)
+	conn.Write(data)
+
+	response, err := io.ReadAll(conn)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp message.Message
+	if err := json.Unmarshal(response, &resp); err != nil {
+		return nil, err
+	}
+
+	return resp.FileTree, nil
+}
+
+func (p *Peer) handleList(conn net.Conn) {
+	tree, err := fs.BuildFileTree("shared")
+	if err != nil {
+		return
+	}
+	resp := message.Message{
+		Type:     "LIST",
+		From:     p.ID,
+		FileTree: &tree,
+	}
+	data, _ := json.Marshal(resp)
+	conn.Write(data)
+}
+
 

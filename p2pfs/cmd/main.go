@@ -4,32 +4,56 @@ import (
 	"fmt"
 	"p2pfs/internal/gui"
 	"p2pfs/internal/peer"
+	"time"
 )
 
 func main() {
-	// Cambia estos valores por nodo
-	selfID := 1
+	// Configuración inicial sin ID (se asignará dinámicamente)
 	port := "8001"
-
 	localIP := peer.GetLocalIP()
 	fmt.Println("Esta máquina tiene IP:", localIP)
 
-
-
-	// Lista de todos los nodos (IPs REALES en la red)
-	peers := []peer.PeerInfo{
-		{ID: 1, IP: "192.168.0.6", Port: "8001"},
-		{ID: 2, IP: "192.168.1.11", Port: "8002"},
-		{ID: 3, IP: "192.168.1.12", Port: "8003"},
-		{ID: 4, IP: "192.168.1.13", Port: "8004"},
+	// Crear nodo sin ID (será asignado luego)
+	self := &peer.Peer{
+		ID:    0, // ID aún no asignado
+		IP:    localIP,
+		Port:  port,
+		Peers: []peer.PeerInfo{},
 	}
 
-	self := peer.NewPeer(selfID, port, peers)
+	// 🔊 Listener para handshakes y mensajes UDP
+	go peer.ListenForBroadcasts(self, func() []peer.PeerInfo {
+		return self.Peers
+	})
 
+	// 📣 Broadcast activo mientras no tenga ID
+	go peer.BroadcastHello(self)
+
+	// 🧠 Iniciar listener TCP de archivos, SYNC, etc.
 	go self.StartListener()
-  // ✅ Lanzar el RetryWorker cada 10 segundos
-	go self.RetryWorker(10 * time.Second)
 
-	gui.StartGUI(selfID, peers, self)
+	// ♻️ Reintentos de envío de archivos fallidos
+	go self.RetryWorker(10 * time.Second)
+  // Si después de 5 segundos no se ha recibido ID, autoasignar
+  go func() {
+
+	  time.Sleep(5 * time.Second)
+	  if self.ID == 0 {
+		  fmt.Println("⚠️  No se recibió ASSIGN_ID. Asignando ID=1 como nodo inicial.")
+		  self.ID = 1
+		  self.LastIDAssigned = time.Now()
+
+		  newNode := peer.NodeAnnouncement{
+			  Type: "NEW_NODE",
+			  IP:   self.IP,
+			  Port: self.Port,
+			  ID:   self.ID,
+		  }
+		  peer.BroadcastNewNode(newNode)
+	  }
+  }()
+
+	// 🖼️ Interfaz gráfica
+	gui.StartGUI(self.ID, self.Peers, self)
 }
 

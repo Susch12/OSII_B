@@ -103,7 +103,15 @@ func StartGUI(selfID int, peers []peer.PeerInfo, self *peer.Peer) {
 		isLocal := p.ID == selfID
 		titleText := ""
 		if isLocal {
-			titleText = fmt.Sprintf("Máquina Local (%s:%s)", p.IP, p.Port)
+
+			tree, _ := conn.RequestFileTree(fmt.Sprintf("%s:%s", p.IP, p.Port))
+      var fileRows []fyne.CanvasObject
+      if tree != nil {
+
+	      fileRows = buildTreeUI(*tree, 0)
+    } else {
+	    fileRows = []fyne.CanvasObject{canvas.NewText("[!] Sin conexión", textSecondary)}
+    }
 		} else {
 			titleText = fmt.Sprintf("Máquina %d (%s:%s)", p.ID, p.IP, p.Port)
 		}
@@ -240,3 +248,18 @@ func iconoPorNombre(nombre string) fyne.Resource {
 		return theme.FileIcon()
 	}
 }
+
+func buildTreeUI(node fs.FileNode, indent int) []fyne.CanvasObject {
+	var rows []fyne.CanvasObject
+	prefix := strings.Repeat("    ", indent)
+	label := canvas.NewText(prefix+node.Name, textPrimary)
+	if node.IsDir {
+		label.TextStyle.Bold = true
+	}
+	rows = append(rows, label)
+	for _, child := range node.Children {
+		rows = append(rows, buildTreeUI(child, indent+1)...)
+	}
+	return rows
+}
+
